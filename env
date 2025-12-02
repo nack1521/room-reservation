@@ -1,0 +1,4 @@
+JWT_EXPIRE_IN=3600s
+JWT_SECRET=your_jwt_secret_key
+GOOGLE_CLIENT_ID=143703235414-ecoq66l1vkv1qpk1gcssgkqib9ok2ot3.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=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
