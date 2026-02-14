@@ -25,6 +25,29 @@ export class AuthService {
     return { access_token: this.jwtService.sign(payload) };
   }
 
+  async findOrCreateUser(googleUser: any) {
+    let user = await this.users.findByEmail(googleUser.email);
+    
+    if (!user) {
+      user = await this.users.create({
+        email: googleUser.email,
+        name: googleUser.name,
+        googleId: googleUser.googleId,
+        picture: googleUser.picture,
+        roles: ['user'],
+      } as any);
+    } else {
+      // Update user info
+      await this.users.updateById(user._id.toString(), {
+        name: googleUser.name,
+        picture: googleUser.picture,
+      });
+      user = await this.users.findByEmail(googleUser.email);
+    }
+    
+    return user;
+  }
+
   // Upsert user from OAuth provider (Google). Returns the user document.
   async validateOAuthLogin(oauthUser: { email?: string; googleId?: string; name?: string; picture?: string }) {
     const email = oauthUser?.email;
@@ -42,10 +65,24 @@ export class AuthService {
     } else {
       // Link googleId if missing
       if (!user.googleId && oauthUser.googleId) {
-        await this.users.updateById(user._id, { googleId: oauthUser.googleId }).catch(() => {});
+        await this.users.updateById(user._id.toString(), { googleId: oauthUser.googleId }).catch(() => {});
         user = await this.users.findByEmail(email);
       }
     }
     return user;
+  }
+
+  async generateToken(user: any) {
+    const payload = { 
+      sub: user._id || user.id, 
+      email: user.email,
+      name: user.name 
+    };
+    
+    return this.jwtService.sign(payload);
+  }
+
+  async findUserById(userId: string) {
+    return this.users.findById(userId);
   }
 }

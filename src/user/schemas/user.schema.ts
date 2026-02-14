@@ -23,6 +23,9 @@ export class User {
   googleId: string;
 
   @Prop()
+  picture?: string;
+
+  @Prop()
   createdAt: Date;
 
   @Prop({ default: null })
