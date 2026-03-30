@@ -29,4 +29,8 @@ export class UserService {
   async updateById(id: string, update: Partial<User>) {
     return this.userModel.findByIdAndUpdate(id, update, { new: true }).exec();
   }
+
+  async updatePhoneNumber(id: string, phoneNumber: string) {
+    return this.userModel.findByIdAndUpdate(id, { phoneNumber }, { new: true }).exec();
+  }
 }
