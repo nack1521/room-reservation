@@ -1,4 +1,4 @@
-import { Controller, Post, UseGuards, Request, Get, Res } from '@nestjs/common';
+import { Controller, Post, UseGuards, Request, Get, Res, ForbiddenException, Query } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserService } from 'src/user/user.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -48,8 +48,8 @@ export class AuthController {
       // Generate JWT token
       const token = await this.authService.generateToken(user);
       
-      // ✅ Set HTTP-only cookie
-      res.cookie('token', token, {
+      // Set HTTP-only cookie for JWT guard extractor
+      res.cookie('jwt', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
@@ -185,11 +185,38 @@ export class AuthController {
       `);
     }
   }
+
+  @Get('test/admin-token')
+  async getTestingAdminToken(@Query('email') email?: string, @Res({ passthrough: true }) res?: express.Response) {
+    if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+      throw new ForbiddenException('This endpoint is disabled in production');
+    }
+
+    const token = this.authService.generateTestingAdminToken(email);
+
+    res?.cookie('jwt', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return {
+      message: 'Testing admin JWT generated',
+      token,
+      usage: {
+        authorizationHeader: `Bearer ${token}`,
+        cookie: `jwt=${token}`,
+      },
+      roles: ['admin', 'super_admin'],
+    };
+  }
   
   @Get('me')
   @UseGuards(JwtAuthGuard) // Your JWT guard
   async getProfile(@Request() req) {
-    const user = await this.authService.findUserById(req.user.userId);
+    const id = req.user?.id ?? req.user?.sub ?? req.user?.profile?._id;
+    const user = await this.authService.findUserById(id);
     
     if (!user) {
       throw new Error('User not found');

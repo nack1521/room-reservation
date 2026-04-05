@@ -4,90 +4,227 @@ import { Model, Types } from 'mongoose';
 import { IReservation } from './schemas/reservation.schema';
 import { User } from 'src/user/schemas/user.schema';
 import { Role } from 'src/auth/roles.enum';
-import { isBefore, differenceInMinutes } from 'date-fns';
+import { IRoom } from 'src/room/schemas/room.schema';
+import { AddOnItem } from 'src/room/constants/addons-by-type';
+import { ReservationAddOnDto } from './dto/create-reservation.dto';
+
+type ReservationStatus = 'pending' | 'approved' | 'rejected';
+
+type ReservationAddOnSnapshot = {
+  addOnId: string;
+  label: string;
+  unit: string;
+  qty: number;
+};
 
 @Injectable()
 export class ReservationService {
   constructor(
     @InjectModel('Reservation') private reservationModel: Model<IReservation>,
     @InjectModel('User') private userModel: Model<User>,
+    @InjectModel('Room') private roomModel: Model<IRoom>,
   ) {}
 
-  private openMinutes = 8 * 60 + 30;
+  private openMinutes = 7 * 60 + 30;
   private closeMinutes = 20 * 60 + 30;
 
   private toLocalMinutes(d: Date) {
     return d.getHours() * 60 + d.getMinutes();
   }
 
-  async create(userId: string, roomId: string, startISO: string, endISO: string) {
+  private isTeacherOrAbove(user: User | null) {
+    const roles = user?.roles || [];
+    return roles.includes(Role.TEACHER) || roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
+  }
+
+  private isAdminOrAbove(user: User | null) {
+    const roles = user?.roles || [];
+    return roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
+  }
+
+  private getDayRange(from: Date) {
+    const dayStart = new Date(from);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    return { dayStart, dayEnd };
+  }
+
+  private validateBlockTime(start: Date, end: Date) {
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
+      throw new BadRequestException('invalid time');
+    }
+
+    const sameDay = start.toDateString() === end.toDateString();
+    if (!sameDay) {
+      throw new BadRequestException('reservation must be within one day');
+    }
+
+    const startMin = this.toLocalMinutes(start);
+    const endMin = this.toLocalMinutes(end);
+    const durationMin = Math.floor((end.getTime() - start.getTime()) / 60000);
+
+    if (startMin < this.openMinutes || endMin > this.closeMinutes) {
+      throw new ForbiddenException('room available only between 07:30 and 20:30');
+    }
+
+    if (start.getMinutes() !== 30 || end.getMinutes() !== 30) {
+      throw new BadRequestException('start/end must be on :30 time blocks');
+    }
+
+    if (durationMin % 60 !== 0) {
+      throw new BadRequestException('duration must be in 1-hour blocks');
+    }
+
+    return { durationMin };
+  }
+
+  private async getApprovedMinutesForDay(userId: string, dayStart: Date, dayEnd: Date, excludeId?: string) {
+    const rows = await this.reservationModel.find({
+      user: new Types.ObjectId(userId),
+      status: 'approved',
+      start: { $gte: dayStart, $lt: dayEnd },
+      ...(excludeId ? { _id: { $ne: new Types.ObjectId(excludeId) } } : {}),
+    }).select('start end').lean().exec();
+
+    return rows.reduce((sum, row: any) => {
+      const minutes = Math.max(0, Math.floor((new Date(row.end).getTime() - new Date(row.start).getTime()) / 60000));
+      return sum + minutes;
+    }, 0);
+  }
+
+  private async hasApprovedOverlap(roomId: string | Types.ObjectId, start: Date, end: Date, excludeId?: string) {
+    const overlap = await this.reservationModel.findOne({
+      room: typeof roomId === 'string' ? new Types.ObjectId(roomId) : roomId,
+      status: 'approved',
+      ...(excludeId ? { _id: { $ne: new Types.ObjectId(excludeId) } } : {}),
+      $or: [{ start: { $lt: end }, end: { $gt: start } }],
+    }).exec();
+
+    return Boolean(overlap);
+  }
+
+  private buildAddOnsSnapshot(allowedAddOns: AddOnItem[] = [], requestedAddOns: ReservationAddOnDto[] = []): ReservationAddOnSnapshot[] {
+    if (!requestedAddOns?.length) {
+      return [];
+    }
+
+    const allowedMap = new Map(allowedAddOns.map((a) => [a.id, a]));
+
+    return requestedAddOns.map((item) => {
+      if (!item?.addOnId) {
+        throw new BadRequestException('addOnId is required');
+      }
+
+      const allowed = allowedMap.get(item.addOnId);
+      if (!allowed) {
+        throw new BadRequestException(`add-on ${item.addOnId} is not allowed for this room`);
+      }
+
+      const qty = Number(item.qty);
+      if (!Number.isInteger(qty) || qty < 1) {
+        throw new BadRequestException(`add-on ${item.addOnId} qty must be a positive integer`);
+      }
+
+      if (qty > allowed.max) {
+        throw new BadRequestException(`add-on ${item.addOnId} qty exceeds max ${allowed.max}`);
+      }
+
+      return {
+        addOnId: allowed.id,
+        label: allowed.label,
+        unit: allowed.unit,
+        qty,
+      };
+    });
+  }
+
+  async create(userId: string, roomId: string, startISO: string, endISO: string, note?: string, addOns?: ReservationAddOnDto[]) {
     const user = await this.userModel.findById(userId).lean();
     if (!user) throw new BadRequestException('user not found');
+    const room = await this.roomModel.findById(roomId).lean();
+    if (!room) throw new BadRequestException('room not found');
 
     const start = new Date(startISO);
     const end = new Date(endISO);
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) throw new BadRequestException('invalid time');
+    const { durationMin } = this.validateBlockTime(start, end);
+    const isTeacherOrAbove = this.isTeacherOrAbove(user as any);
+    const { dayStart, dayEnd } = this.getDayRange(start);
 
-    const durationMin = Math.floor((end.getTime() - start.getTime()) / 60000);
-    const isTeacherOrAbove = (user.roles || []).includes(Role.TEACHER) || (user.roles || []).includes(Role.ADMIN) || (user.roles || []).includes(Role.SUPER_ADMIN);
-
+    let status: ReservationStatus = 'approved';
     if (!isTeacherOrAbove) {
-      if (durationMin > 120) throw new ForbiddenException('max 2 hours per reservation');
-      // daily count
-      const dayStart = new Date(start);
-      dayStart.setHours(0,0,0,0);
-      const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayEnd.getDate()+1);
-      const count = await this.reservationModel.countDocuments({
-        user: new Types.ObjectId(userId),
-        start: { $gte: dayStart, $lt: dayEnd },
-      }).exec();
-      if (count >= 2) throw new ForbiddenException('max 2 reservations per day');
+      const usedMinutes = await this.getApprovedMinutesForDay(userId, dayStart, dayEnd);
+      if (usedMinutes + durationMin > 120) {
+        status = 'pending';
+      }
     }
 
-    // check day bounds (use local server timezone)
-    const startMin = this.toLocalMinutes(start);
-    const endMin = this.toLocalMinutes(end);
-    if (startMin < this.openMinutes || endMin > this.closeMinutes) {
-      throw new ForbiddenException('room available only between 08:30 and 20:30');
+    if (status === 'approved') {
+      const overlap = await this.hasApprovedOverlap(roomId, start, end);
+      if (overlap) throw new ForbiddenException('time slot already booked');
     }
 
-    // overlapping check
-    const overlap = await this.reservationModel.findOne({
-      room: new Types.ObjectId(roomId),
-      $or: [{ start: { $lt: end }, end: { $gt: start } }],
-    }).exec();
-    if (overlap) throw new ForbiddenException('time slot already booked');
+    const addOnSnapshot = this.buildAddOnsSnapshot(room.addOnsByType || [], addOns || []);
 
     const created = new this.reservationModel({
       room: new Types.ObjectId(roomId),
       user: new Types.ObjectId(userId),
       start,
       end,
+      note,
+      addOns: addOnSnapshot,
+      status,
     });
-    return created.save();
+    const saved = await created.save();
+
+    return {
+      reservation: saved,
+      message: status === 'pending' ? 'Reservation request submitted and pending admin approval' : 'Reservation created',
+    };
   }
 
-  async update(reservationId: string, userId: string, startISO: string, endISO: string) {
+  async update(reservationId: string, userId: string, startISO: string, endISO: string, note?: string, addOns?: ReservationAddOnDto[]) {
     // allow change within 1 day by owner or always by teacher/admin
     const r = await this.reservationModel.findById(reservationId).exec();
     if (!r) throw new BadRequestException('not found');
+    const actor = await this.userModel.findById(userId).lean();
+    if (!actor) throw new BadRequestException('user not found');
+
     if (String(r.user) !== String(userId)) {
-      // owner match required unless admin/teacher
-      const user = await this.userModel.findById(userId).lean();
-      if (!user) throw new BadRequestException('user not found');
-      const isAdmin = (user.roles||[]).includes(Role.ADMIN) || (user.roles||[]).includes(Role.SUPER_ADMIN);
+      // owner match required unless admin
+      const isAdmin = this.isAdminOrAbove(actor as any);
       if (!isAdmin) throw new ForbiddenException('not allowed');
     }
-    // reuse create checks by attempting to find overlaps excluding current id
-    const start = new Date(startISO), end = new Date(endISO);
-    const overlap = await this.reservationModel.findOne({
-      _id: { $ne: r._id },
-      room: r.room,
-      $or: [{ start: { $lt: end }, end: { $gt: start } }],
-    }).exec();
-    if (overlap) throw new ForbiddenException('time slot already booked');
-    r.start = start; r.end = end;
+
+    const start = new Date(startISO);
+    const end = new Date(endISO);
+    const { durationMin } = this.validateBlockTime(start, end);
+    const { dayStart, dayEnd } = this.getDayRange(start);
+    const room = await this.roomModel.findById(r.room).lean();
+    if (!room) throw new BadRequestException('room not found');
+
+    let nextStatus: ReservationStatus = r.status as ReservationStatus;
+    const isTeacherOrAbove = this.isTeacherOrAbove(actor as any);
+    if (!isTeacherOrAbove) {
+      const usedMinutes = await this.getApprovedMinutesForDay(String(r.user), dayStart, dayEnd, reservationId);
+      if (usedMinutes + durationMin > 120) {
+        nextStatus = 'pending';
+      } else if (r.status === 'pending') {
+        nextStatus = 'approved';
+      }
+    }
+
+    if (nextStatus === 'approved') {
+      const overlap = await this.hasApprovedOverlap(r.room, start, end, reservationId);
+      if (overlap) throw new ForbiddenException('time slot already booked');
+    }
+
+    r.start = start;
+    r.end = end;
+    r.note = note;
+    r.addOns = this.buildAddOnsSnapshot(room.addOnsByType || [], addOns || []);
+    r.status = nextStatus;
+
     return r.save();
   }
 
@@ -103,13 +240,86 @@ export class ReservationService {
     return this.reservationModel.findByIdAndDelete(reservationId).exec();
   }
 
-  async listForRoom(roomId: string, date?: string) {
+  async listForRoom(roomId: string, date?: string, status: ReservationStatus | 'all' = 'approved') {
     const q: any = { room: new Types.ObjectId(roomId) };
+    if (status !== 'all') {
+      q.status = status;
+    }
     if (date) {
       const d = new Date(date); d.setHours(0,0,0,0);
       const d2 = new Date(d); d2.setDate(d2.getDate()+1);
       q.start = { $gte: d, $lt: d2 };
     }
     return this.reservationModel.find(q).populate('user', 'email name').exec();
+  }
+
+  async availabilityForRoomDay(roomId: string, date: string) {
+    if (!date) throw new BadRequestException('date is required (YYYY-MM-DD)');
+
+    const d = new Date(date);
+    if (isNaN(d.getTime())) throw new BadRequestException('invalid date');
+    d.setHours(0, 0, 0, 0);
+    const d2 = new Date(d);
+    d2.setDate(d2.getDate() + 1);
+
+    const reservations = await this.reservationModel.find({
+      room: new Types.ObjectId(roomId),
+      status: 'approved',
+      start: { $gte: d, $lt: d2 },
+    }).select('_id start end').lean().exec();
+
+    const blocks: Array<{ start: string; end: string; isFree: boolean; reservationId: string | null }> = [];
+    for (let minutes = this.openMinutes; minutes < this.closeMinutes; minutes += 60) {
+      const blockStart = new Date(d);
+      blockStart.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+      const blockEnd = new Date(blockStart);
+      blockEnd.setMinutes(blockEnd.getMinutes() + 60);
+
+      const overlap = reservations.find((r: any) => new Date(r.start) < blockEnd && new Date(r.end) > blockStart);
+      blocks.push({
+        start: blockStart.toISOString(),
+        end: blockEnd.toISOString(),
+        isFree: !overlap,
+        reservationId: overlap ? String(overlap._id) : null,
+      });
+    }
+
+    return {
+      roomId,
+      date: d.toISOString(),
+      blocks,
+    };
+  }
+
+  async listPending() {
+    return this.reservationModel.find({ status: 'pending' }).populate('user', 'email name roles').populate('room', 'name type floor').exec();
+  }
+
+  async reviewReservation(reservationId: string, reviewerId: string, approve: boolean, reviewNote?: string) {
+    const reviewer = await this.userModel.findById(reviewerId).lean();
+    if (!reviewer) throw new BadRequestException('reviewer not found');
+    if (!this.isAdminOrAbove(reviewer as any)) {
+      throw new ForbiddenException('only admin/super_admin can review reservations');
+    }
+
+    const reservation = await this.reservationModel.findById(reservationId).exec();
+    if (!reservation) throw new BadRequestException('reservation not found');
+    if (reservation.status !== 'pending') {
+      throw new BadRequestException('only pending reservations can be reviewed');
+    }
+
+    if (approve) {
+      const overlap = await this.hasApprovedOverlap(reservation.room, reservation.start, reservation.end, reservationId);
+      if (overlap) throw new ForbiddenException('cannot approve: time slot already booked');
+      reservation.status = 'approved';
+    } else {
+      reservation.status = 'rejected';
+    }
+
+    reservation.reviewedBy = new Types.ObjectId(reviewerId);
+    reservation.reviewedAt = new Date();
+    reservation.reviewNote = reviewNote;
+
+    return reservation.save();
   }
 }

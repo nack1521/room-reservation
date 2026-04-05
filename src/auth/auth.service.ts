@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UserService } from 'src/user/user.service';
+import { Role } from './roles.enum';
 
 @Injectable()
 export class AuthService {
@@ -76,9 +77,21 @@ export class AuthService {
     const payload = { 
       sub: user._id || user.id, 
       email: user.email,
-      name: user.name 
+      name: user.name,
+      roles: user.roles || [],
     };
     
+    return this.jwtService.sign(payload);
+  }
+
+  generateTestingAdminToken(email = 'postman-admin@local.test') {
+    const payload = {
+      sub: 'postman-admin',
+      email,
+      name: 'Postman Admin',
+      roles: [Role.ADMIN, Role.SUPER_ADMIN],
+    };
+
     return this.jwtService.sign(payload);
   }
 
