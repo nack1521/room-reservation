@@ -8,7 +8,8 @@ import { IRoom } from 'src/room/schemas/room.schema';
 import { AddOnItem } from 'src/room/constants/addons-by-type';
 import { ReservationAddOnDto } from './dto/create-reservation.dto';
 
-type ReservationStatus = 'pending' | 'approved' | 'rejected';
+type ReservationStatus = 'upcoming' | 'pending' | 'done' | 'rejected' | 'canceled';
+type ReservationApprovalState = 'approved' | 'not_approved';
 
 type ReservationAddOnSnapshot = {
   addOnId: string;
@@ -27,6 +28,27 @@ export class ReservationService {
 
   private openMinutes = 7 * 60 + 30;
   private closeMinutes = 20 * 60 + 30;
+
+  private async markElapsedUpcomingAsDone(extraFilter: any = {}) {
+    await this.reservationModel.updateMany(
+      {
+        ...extraFilter,
+        isDeleted: { $ne: true },
+        status: 'approved',
+      },
+      { $set: { status: 'upcoming', approvalState: 'approved' } },
+    ).exec();
+
+    await this.reservationModel.updateMany(
+      {
+        ...extraFilter,
+        isDeleted: { $ne: true },
+        status: 'upcoming',
+        end: { $lt: new Date() },
+      },
+      { $set: { status: 'done' } },
+    ).exec();
+  }
 
   private toLocalMinutes(d: Date) {
     return d.getHours() * 60 + d.getMinutes();
@@ -82,7 +104,11 @@ export class ReservationService {
   private async getApprovedMinutesForDay(userId: string, dayStart: Date, dayEnd: Date, excludeId?: string) {
     const rows = await this.reservationModel.find({
       user: new Types.ObjectId(userId),
-      status: 'approved',
+      isDeleted: { $ne: true },
+      $or: [
+        { approvalState: 'approved' },
+        { status: { $in: ['upcoming', 'done', 'approved'] } },
+      ],
       start: { $gte: dayStart, $lt: dayEnd },
       ...(excludeId ? { _id: { $ne: new Types.ObjectId(excludeId) } } : {}),
     }).select('start end').lean().exec();
@@ -96,7 +122,8 @@ export class ReservationService {
   private async hasApprovedOverlap(roomId: string | Types.ObjectId, start: Date, end: Date, excludeId?: string) {
     const overlap = await this.reservationModel.findOne({
       room: typeof roomId === 'string' ? new Types.ObjectId(roomId) : roomId,
-      status: 'approved',
+      isDeleted: { $ne: true },
+      status: { $in: ['upcoming', 'approved'] },
       ...(excludeId ? { _id: { $ne: new Types.ObjectId(excludeId) } } : {}),
       $or: [{ start: { $lt: end }, end: { $gt: start } }],
     }).exec();
@@ -151,15 +178,17 @@ export class ReservationService {
     const isTeacherOrAbove = this.isTeacherOrAbove(user as any);
     const { dayStart, dayEnd } = this.getDayRange(start);
 
-    let status: ReservationStatus = 'approved';
+    let status: ReservationStatus = 'upcoming';
+    let approvalState: ReservationApprovalState = 'approved';
     if (!isTeacherOrAbove) {
       const usedMinutes = await this.getApprovedMinutesForDay(userId, dayStart, dayEnd);
       if (usedMinutes + durationMin > 120) {
         status = 'pending';
+        approvalState = 'not_approved';
       }
     }
 
-    if (status === 'approved') {
+    if (status === 'upcoming') {
       const overlap = await this.hasApprovedOverlap(roomId, start, end);
       if (overlap) throw new ForbiddenException('time slot already booked');
     }
@@ -174,6 +203,7 @@ export class ReservationService {
       note,
       addOns: addOnSnapshot,
       status,
+      approvalState,
     });
     const saved = await created.save();
 
@@ -186,7 +216,7 @@ export class ReservationService {
   async update(reservationId: string, userId: string, startISO: string, endISO: string, note?: string, addOns?: ReservationAddOnDto[]) {
     // allow change within 1 day by owner or always by teacher/admin
     const r = await this.reservationModel.findById(reservationId).exec();
-    if (!r) throw new BadRequestException('not found');
+    if (!r || r.isDeleted) throw new BadRequestException('not found');
     const actor = await this.userModel.findById(userId).lean();
     if (!actor) throw new BadRequestException('user not found');
 
@@ -204,17 +234,20 @@ export class ReservationService {
     if (!room) throw new BadRequestException('room not found');
 
     let nextStatus: ReservationStatus = r.status as ReservationStatus;
+    let nextApprovalState: ReservationApprovalState = (r as any).approvalState || 'approved';
     const isTeacherOrAbove = this.isTeacherOrAbove(actor as any);
     if (!isTeacherOrAbove) {
       const usedMinutes = await this.getApprovedMinutesForDay(String(r.user), dayStart, dayEnd, reservationId);
       if (usedMinutes + durationMin > 120) {
         nextStatus = 'pending';
+        nextApprovalState = 'not_approved';
       } else if (r.status === 'pending') {
-        nextStatus = 'approved';
+        nextStatus = 'upcoming';
+        nextApprovalState = 'approved';
       }
     }
 
-    if (nextStatus === 'approved') {
+    if (nextStatus === 'upcoming') {
       const overlap = await this.hasApprovedOverlap(r.room, start, end, reservationId);
       if (overlap) throw new ForbiddenException('time slot already booked');
     }
@@ -224,24 +257,59 @@ export class ReservationService {
     r.note = note;
     r.addOns = this.buildAddOnsSnapshot(room.addOnsByType || [], addOns || []);
     r.status = nextStatus;
+    (r as any).approvalState = nextApprovalState;
 
     return r.save();
   }
 
   async remove(reservationId: string, userId: string) {
     const r = await this.reservationModel.findById(reservationId).exec();
-    if (!r) throw new BadRequestException('not found');
+    if (!r || r.isDeleted) throw new BadRequestException('not found');
     if (String(r.user) !== String(userId)) {
       const user = await this.userModel.findById(userId).lean();
       if (!user) throw new BadRequestException('user not found');
       const isAdmin = (user.roles||[]).includes(Role.ADMIN) || (user.roles||[]).includes(Role.SUPER_ADMIN);
       if (!isAdmin) throw new ForbiddenException('not allowed');
     }
-    return this.reservationModel.findByIdAndDelete(reservationId).exec();
+
+    r.isDeleted = true;
+    r.deletedAt = new Date();
+    await r.save();
+
+    return { message: 'Reservation deleted' };
   }
 
-  async listForRoom(roomId: string, date?: string, status: ReservationStatus | 'all' = 'approved') {
-    const q: any = { room: new Types.ObjectId(roomId) };
+  async cancelUpcoming(reservationId: string, userId: string) {
+    const r = await this.reservationModel.findById(reservationId).exec();
+    if (!r || r.isDeleted) throw new BadRequestException('reservation not found');
+
+    if (String(r.user) !== String(userId)) {
+      const user = await this.userModel.findById(userId).lean();
+      if (!user) throw new BadRequestException('user not found');
+      const isAdmin = this.isAdminOrAbove(user as any);
+      if (!isAdmin) throw new ForbiddenException('not allowed');
+    }
+
+    if (r.status !== 'upcoming') {
+      throw new BadRequestException('only upcoming reservations can be cancelled');
+    }
+
+    const now = new Date();
+    if (new Date(r.start).getTime() <= now.getTime()) {
+      throw new BadRequestException('only upcoming reservations can be cancelled');
+    }
+
+    r.status = 'canceled';
+    (r as any).approvalState = 'not_approved';
+    await r.save();
+
+    return { message: 'Reservation cancelled' };
+  }
+
+  async listForRoom(roomId: string, date?: string, status: ReservationStatus | 'all' = 'upcoming') {
+    await this.markElapsedUpcomingAsDone({ room: new Types.ObjectId(roomId) });
+
+    const q: any = { room: new Types.ObjectId(roomId), isDeleted: { $ne: true } };
     if (status !== 'all') {
       q.status = status;
     }
@@ -251,6 +319,62 @@ export class ReservationService {
       q.start = { $gte: d, $lt: d2 };
     }
     return this.reservationModel.find(q).populate('user', 'email name').exec();
+  }
+
+  async listForUser(targetUserId: string, actorUserId: string, date?: string, status: ReservationStatus | 'all' = 'all') {
+    const actor = await this.userModel.findById(actorUserId).lean();
+    if (!actor) throw new BadRequestException('user not found');
+
+    await this.markElapsedUpcomingAsDone({ user: new Types.ObjectId(targetUserId) });
+
+    const isSelf = String(targetUserId) === String(actorUserId);
+    if (!isSelf && !this.isAdminOrAbove(actor as any)) {
+      throw new ForbiddenException('not allowed');
+    }
+
+    const q: any = { user: new Types.ObjectId(targetUserId), isDeleted: { $ne: true } };
+    if (status !== 'all') {
+      q.status = status;
+    }
+    if (date) {
+      const d = new Date(date); d.setHours(0, 0, 0, 0);
+      const d2 = new Date(d); d2.setDate(d2.getDate() + 1);
+      q.start = { $gte: d, $lt: d2 };
+    }
+
+    return this.reservationModel
+      .find(q)
+      .populate('room', 'name type floor')
+      .sort({ start: 1 })
+      .exec();
+  }
+
+  async dashboardForUser(userId: string) {
+    await this.markElapsedUpcomingAsDone({ user: new Types.ObjectId(userId) });
+
+    const reservations = await this.reservationModel
+      .find({ user: new Types.ObjectId(userId), isDeleted: { $ne: true } })
+      .populate('room', 'name type floor')
+      .sort({ start: 1 })
+      .exec();
+
+    const pending = reservations.filter((r: any) => r.status === 'pending');
+    const upcoming = reservations.filter((r: any) => r.status === 'upcoming');
+    const history = reservations
+      .filter((r: any) => ['done', 'rejected', 'canceled'].includes(r.status))
+      .sort((a: any, b: any) => new Date(b.end).getTime() - new Date(a.end).getTime());
+
+    return {
+      now: new Date().toISOString(),
+      counts: {
+        upcoming: upcoming.length,
+        pending: pending.length,
+        history: history.length,
+      },
+      upcoming,
+      pending,
+      history,
+    };
   }
 
   async availabilityForRoomDay(roomId: string, date: string) {
@@ -264,7 +388,8 @@ export class ReservationService {
 
     const reservations = await this.reservationModel.find({
       room: new Types.ObjectId(roomId),
-      status: 'approved',
+      isDeleted: { $ne: true },
+      status: { $in: ['upcoming', 'approved'] },
       start: { $gte: d, $lt: d2 },
     }).select('_id start end').lean().exec();
 
@@ -292,7 +417,7 @@ export class ReservationService {
   }
 
   async listPending() {
-    return this.reservationModel.find({ status: 'pending' }).populate('user', 'email name roles').populate('room', 'name type floor').exec();
+    return this.reservationModel.find({ status: 'pending', isDeleted: { $ne: true } }).populate('user', 'email name roles').populate('room', 'name type floor').exec();
   }
 
   async reviewReservation(reservationId: string, reviewerId: string, approve: boolean, reviewNote?: string) {
@@ -302,7 +427,7 @@ export class ReservationService {
       throw new ForbiddenException('only admin/super_admin can review reservations');
     }
 
-    const reservation = await this.reservationModel.findById(reservationId).exec();
+    const reservation = await this.reservationModel.findOne({ _id: new Types.ObjectId(reservationId), isDeleted: { $ne: true } }).exec();
     if (!reservation) throw new BadRequestException('reservation not found');
     if (reservation.status !== 'pending') {
       throw new BadRequestException('only pending reservations can be reviewed');
@@ -311,9 +436,11 @@ export class ReservationService {
     if (approve) {
       const overlap = await this.hasApprovedOverlap(reservation.room, reservation.start, reservation.end, reservationId);
       if (overlap) throw new ForbiddenException('cannot approve: time slot already booked');
-      reservation.status = 'approved';
+      reservation.status = 'upcoming';
+      (reservation as any).approvalState = 'approved';
     } else {
       reservation.status = 'rejected';
+      (reservation as any).approvalState = 'not_approved';
     }
 
     reservation.reviewedBy = new Types.ObjectId(reviewerId);

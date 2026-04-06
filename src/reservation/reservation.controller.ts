@@ -11,6 +11,30 @@ import { Role } from 'src/auth/roles.enum';
 export class ReservationController {
   constructor(private svc: ReservationService) {}
 
+  @Get('me')
+  async myReservations(
+    @Request() req,
+    @Query('status') status?: 'upcoming' | 'pending' | 'done' | 'rejected' | 'canceled' | 'all',
+    @Query('date') date?: string,
+  ) {
+    return this.svc.listForUser(req.user.id || req.user._id, req.user.id || req.user._id, date, status || 'all');
+  }
+
+  @Get('me/dashboard')
+  async myDashboard(@Request() req) {
+    return this.svc.dashboardForUser(req.user.id || req.user._id);
+  }
+
+  @Get('user/:userId')
+  async userReservations(
+    @Request() req,
+    @Param('userId') userId: string,
+    @Query('status') status?: 'upcoming' | 'pending' | 'done' | 'rejected' | 'canceled' | 'all',
+    @Query('date') date?: string,
+  ) {
+    return this.svc.listForUser(userId, req.user.id || req.user._id, date, status || 'all');
+  }
+
   @Post()
   async create(@Request() req, @Body() dto: CreateReservationDto) {
     return this.svc.create(req.user.id || req.user._id, dto.roomId, dto.start, dto.end, dto.note, dto.addOns);
@@ -19,6 +43,11 @@ export class ReservationController {
   @Patch(':id')
   async update(@Request() req, @Param('id') id: string, @Body() dto: CreateReservationDto) {
     return this.svc.update(id, req.user.id || req.user._id, dto.start, dto.end, dto.note, dto.addOns);
+  }
+
+  @Patch(':id/cancel')
+  async cancel(@Request() req, @Param('id') id: string) {
+    return this.svc.cancelUpcoming(id, req.user.id || req.user._id);
   }
 
   @Delete(':id')
@@ -50,7 +79,7 @@ export class ReservationController {
   }
 
   @Get()
-  async list(@Query('room') room: string, @Query('date') date?: string, @Query('status') status?: 'pending' | 'approved' | 'rejected' | 'all') {
-    return this.svc.listForRoom(room, date, status || 'approved');
+  async list(@Query('room') room: string, @Query('date') date?: string, @Query('status') status?: 'upcoming' | 'pending' | 'done' | 'rejected' | 'canceled' | 'all') {
+    return this.svc.listForRoom(room, date, status || 'upcoming');
   }
 }

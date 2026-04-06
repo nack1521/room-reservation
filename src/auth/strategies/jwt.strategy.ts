@@ -57,6 +57,9 @@ const headerOrCookieExtractor = (req: any) => {
   const cookie = cookieExtractor(req);
   if (cookie) return cookie;
 
+  const bearer = extractBearerToken(req);
+  if (bearer) return bearer;
+
   return null;
 };
 

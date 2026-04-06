@@ -108,7 +108,8 @@ export class AuthController {
                         user: {
                           name: ${JSON.stringify(user.name || '')},
                           email: ${JSON.stringify(user.email)},
-                          picture: ${JSON.stringify(user.picture || '')}
+                          picture: ${JSON.stringify(user.picture || '')},
+                          roles: ${JSON.stringify((user as any).roles || ['user'])}
                         }
                       },
                       '${frontendUrl}'
@@ -116,7 +117,7 @@ export class AuthController {
                     setTimeout(() => window.close(), 500);
                   } else {
                     // Fallback if no opener (shouldn't happen with popup)
-                    window.location.href = '${frontendUrl}/login?success=true&user=${encodeURIComponent(user.name || '')}&email=${encodeURIComponent(user.email)}&picture=${encodeURIComponent(user.picture || '')}';
+                    window.location.href = '${frontendUrl}/login?success=true&user=${encodeURIComponent(user.name || '')}&email=${encodeURIComponent(user.email)}&picture=${encodeURIComponent(user.picture || '')}&roles=${encodeURIComponent(JSON.stringify((user as any).roles || ['user']))}';
                   }
                 } catch (error) {
                   console.error('Error posting message:', error);
@@ -227,6 +228,7 @@ export class AuthController {
         name: user.name,
         email: user.email,
         picture: user.picture,
+        roles: (user as any).roles || [],
       },
     };
   }
