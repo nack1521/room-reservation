@@ -8,34 +8,34 @@ export type UserDocument = User & Document;
 @Schema()
 export class User {
   @Prop({ required: true, unique: true })
-  email: string;
+  email!: string;
 
   @Prop()
-  password: string;
+  password!: string;
 
   @Prop({ required: true })
-  name: string;
+  name!: string;
 
   @Prop({ type: [String], enum: Object.values(Role), default: [Role.USER] })
-  roles: string[]
+  roles!: string[];
 
   @Prop()
-  googleId: string;
+  googleId!: string;
 
   @Prop()
   picture?: string;
 
   @Prop()
-  createdAt: Date;
+  createdAt!: Date;
 
   @Prop({ default: null })
-  deletedAt: Date;
+  deletedAt!: Date;
 
   @Prop({ default: false })
-  isDeleted: boolean;
+  isDeleted!: boolean;
 
   @Prop()
-  phoneNumber: string;
+  phoneNumber!: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

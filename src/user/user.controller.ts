@@ -6,11 +6,14 @@ import {
   UseGuards,
   Request,
   Patch,
+  Param,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { RegisterDTO } from './dto/register.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import path from 'path';
+import { RolesGuard } from 'src/auth/roles.guard';
+import { Roles } from 'src/auth/roles-decorator';
+import { Role } from 'src/auth/roles.enum';
 
 @Controller('users')
 export class UserController {
@@ -19,6 +22,57 @@ export class UserController {
   @Post('register')
   async register(@Body() registerDTO: RegisterDTO) {
     return this.userService.create(registerDTO);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('me/request-teacher')
+  async requestTeacherRole(@Request() req) {
+    const id = req.user?.id ?? req.user?.sub ?? req.user?.profile?._id;
+    const user = await this.userService.requestTeacherRole(id);
+    return {
+      message: 'Teacher role request submitted',
+      user,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Get('teacher-requests')
+  async listTeacherRequests() {
+    return this.userService.listPendingTeacherRequests();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Patch(':id/approve-teacher')
+  async approveTeacherRequest(@Param('id') id: string) {
+    const user = await this.userService.approveTeacherRequest(id);
+    return {
+      message: 'Teacher role approved',
+      user,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Patch(':id/reject-teacher')
+  async rejectTeacherRequest(@Param('id') id: string) {
+    const user = await this.userService.rejectTeacherRequest(id);
+    return {
+      message: 'Teacher role request rejected',
+      user,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @Patch(':id/grant-admin')
+  async grantAdminRole(@Param('id') id: string) {
+    const user = await this.userService.grantAdminRole(id);
+    return {
+      message: 'Admin role granted',
+      user,
+    };
   }
 
   @UseGuards(JwtAuthGuard)

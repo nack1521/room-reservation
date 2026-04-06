@@ -57,6 +57,23 @@ $ npm run test:e2e
 $ npm run test:cov
 ```
 
+## Data migration (roles)
+
+Convert existing KMUTT student emails from `user` to `student` role:
+
+```bash
+# preview only
+$ DRY_RUN=true npm run migrate:kmutt-students
+
+# apply migration
+$ npm run migrate:kmutt-students
+```
+
+Optional environment:
+
+- `MONGO_URI`: MongoDB connection string (default: `mongodb://localhost:27017/room-reservation`)
+- `DRY_RUN`: `true` to preview changes only
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.

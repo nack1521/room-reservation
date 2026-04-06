@@ -35,14 +35,24 @@ export class AuthService {
         name: googleUser.name,
         googleId: googleUser.googleId,
         picture: googleUser.picture,
-        roles: ['user'],
       } as any);
     } else {
       // Update user info
-      await this.users.updateById(user._id.toString(), {
+      const userRoles = user.roles || [];
+      const shouldNormalizeToStudent =
+        this.users.isStudentEmail(googleUser.email) &&
+        userRoles.length === 1 &&
+        userRoles.includes(Role.USER);
+
+      const updatePayload: any = {
         name: googleUser.name,
         picture: googleUser.picture,
-      });
+      };
+      if (!userRoles.length || shouldNormalizeToStudent) {
+        updatePayload.roles = this.users.getDefaultRolesForEmail(googleUser.email);
+      }
+
+      await this.users.updateById(user._id.toString(), updatePayload);
       user = await this.users.findByEmail(googleUser.email);
     }
     
@@ -61,12 +71,25 @@ export class AuthService {
         name: oauthUser.name,
         googleId: oauthUser.googleId,
         picture: oauthUser.picture,
-        roles: ['user'],
       } as any);
     } else {
+      const userRoles = user.roles || [];
+      const shouldNormalizeToStudent =
+        this.users.isStudentEmail(email) &&
+        userRoles.length === 1 &&
+        userRoles.includes(Role.USER);
+
+      const updatePayload: any = {};
       // Link googleId if missing
       if (!user.googleId && oauthUser.googleId) {
-        await this.users.updateById(user._id.toString(), { googleId: oauthUser.googleId }).catch(() => {});
+        updatePayload.googleId = oauthUser.googleId;
+      }
+      if (!userRoles.length || shouldNormalizeToStudent) {
+        updatePayload.roles = this.users.getDefaultRolesForEmail(email);
+      }
+
+      if (Object.keys(updatePayload).length) {
+        await this.users.updateById(user._id.toString(), updatePayload).catch(() => {});
         user = await this.users.findByEmail(email);
       }
     }

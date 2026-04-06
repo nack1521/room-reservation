@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -8,6 +9,7 @@ import { RoomModule } from './room/room.module';
 import { ReservationModule } from './reservation/reservation.module';
 import { SemesterResetService } from './scheduler/semester-reset.service';
 import { SchedulerModule } from './scheduler/scheduler.module';
+import { ControllerLoggingInterceptor } from './common/interceptors/controller-logging.interceptor';
 import * as process from 'process';
 
 @Module({
@@ -21,6 +23,12 @@ import * as process from 'process';
     ReservationModule,
     SchedulerModule,
   ],
-  providers: [SemesterResetService],
+  providers: [
+    SemesterResetService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ControllerLoggingInterceptor,
+    },
+  ],
 })
 export class AppModule {}
