@@ -18,6 +18,15 @@ type ReservationAddOnSnapshot = {
   qty: number;
 };
 
+type AdminReservationFilters = {
+  status?: ReservationStatus | 'all';
+  room?: string;
+  user?: string;
+  date?: string;
+  page?: number;
+  limit?: number;
+};
+
 @Injectable()
 export class ReservationService {
   constructor(
@@ -319,6 +328,62 @@ export class ReservationService {
       q.start = { $gte: d, $lt: d2 };
     }
     return this.reservationModel.find(q).populate('user', 'email name').exec();
+  }
+
+  async listAllForAdmin(filters: AdminReservationFilters = {}) {
+    await this.markElapsedUpcomingAsDone();
+
+    const q: any = { isDeleted: { $ne: true } };
+    const page = Number.isFinite(filters.page) && (filters.page as number) > 0 ? Math.floor(filters.page as number) : 1;
+    const rawLimit = Number.isFinite(filters.limit) && (filters.limit as number) > 0 ? Math.floor(filters.limit as number) : 20;
+    const limit = Math.min(200, Math.max(1, rawLimit));
+    const skip = (page - 1) * limit;
+
+    if (filters.status && filters.status !== 'all') {
+      q.status = filters.status;
+    }
+
+    if (filters.room) {
+      q.room = new Types.ObjectId(filters.room);
+    }
+
+    if (filters.user) {
+      q.user = new Types.ObjectId(filters.user);
+    }
+
+    if (filters.date) {
+      const d = new Date(filters.date);
+      d.setHours(0, 0, 0, 0);
+      const d2 = new Date(d);
+      d2.setDate(d2.getDate() + 1);
+      q.start = { $gte: d, $lt: d2 };
+    }
+
+    const [rows, total] = await Promise.all([
+      this.reservationModel
+        .find(q)
+        .populate('user', 'email name roles')
+        .populate('room', 'name type floor')
+        .sort({ start: 1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.reservationModel.countDocuments(q).exec(),
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return {
+      data: rows,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasPrevPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+    };
   }
 
   async listForUser(targetUserId: string, actorUserId: string, date?: string, status: ReservationStatus | 'all' = 'all') {

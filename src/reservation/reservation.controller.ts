@@ -1,10 +1,11 @@
-import { Controller, Post, Body, UseGuards, Request, Patch, Param, Delete, Get, Query } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Request, Patch, Param, Delete, Get, Query, Res } from '@nestjs/common';
 import { ReservationService } from './reservation.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles-decorator';
 import { Role } from '../auth/roles.enum';
+import type { Response } from 'express';
 
 @Controller('reservations')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -64,6 +65,52 @@ export class ReservationController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   async pending() {
     return this.svc.listPending();
+  }
+
+  @Get('all')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  async listAll(
+    @Request() req,
+    @Res({ passthrough: true }) res: Response,
+    @Query('status') status?: 'upcoming' | 'pending' | 'done' | 'rejected' | 'canceled' | 'all',
+    @Query('room') room?: string,
+    @Query('user') user?: string,
+    @Query('date') date?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const result = await this.svc.listAllForAdmin({
+      status,
+      room,
+      user,
+      date,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    const buildPageUrl = (targetPage: number) => {
+      const url = new URL(`${req.protocol}://${req.get('host')}${req.originalUrl}`);
+      url.searchParams.set('page', String(targetPage));
+      url.searchParams.set('limit', String(result.meta.limit));
+      return `<${url.toString()}>`;
+    };
+
+    const links: string[] = [];
+    if (result.meta.page > 1) {
+      links.push(`${buildPageUrl(1)}; rel="first"`);
+      links.push(`${buildPageUrl(result.meta.page - 1)}; rel="prev"`);
+    }
+    if (result.meta.page < result.meta.totalPages) {
+      links.push(`${buildPageUrl(result.meta.page + 1)}; rel="next"`);
+      links.push(`${buildPageUrl(result.meta.totalPages)}; rel="last"`);
+    }
+
+    if (links.length) {
+      res.setHeader('Link', links.join(', '));
+    }
+    res.setHeader('X-Total-Count', String(result.meta.total));
+
+    return result;
   }
 
   @Patch(':id/approve')
