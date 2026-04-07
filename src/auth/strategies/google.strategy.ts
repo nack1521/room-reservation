@@ -6,9 +6,12 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   constructor(private configService: ConfigService) {
-    const callbackURL =
-      configService.get<string>('GOOGLE_CALLBACK_URL') ||
-      'http://localhost:3000/auth/google/callback';
+    const configuredCallbackUrl = configService.get<string>('GOOGLE_CALLBACK_URL');
+    const callbackURL = configuredCallbackUrl || 'http://localhost:3000/auth/google/callback';
+
+    if ((process.env.NODE_ENV || '').toLowerCase() === 'production' && !configuredCallbackUrl) {
+      throw new Error('GOOGLE_CALLBACK_URL is required in production');
+    }
 
     super({
       clientID: configService.get('GOOGLE_CLIENT_ID'),

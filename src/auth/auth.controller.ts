@@ -1,4 +1,4 @@
-import { Controller, Post, UseGuards, Request, Get, Res, ForbiddenException, Query } from '@nestjs/common';
+import { Controller, Post, UseGuards, Request, Get, Res, ForbiddenException, Query, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserService } from '../user/user.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -220,7 +220,7 @@ export class AuthController {
     const user = await this.authService.findUserById(id);
     
     if (!user) {
-      throw new Error('User not found');
+      throw new UnauthorizedException('User not found');
     }
     
     return {
