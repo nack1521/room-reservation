@@ -7,6 +7,7 @@ import {
   Request,
   Patch,
   Param,
+  BadRequestException,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { RegisterDTO } from './dto/register.dto';
@@ -80,6 +81,20 @@ export class UserController {
   async getProfile(@Request() req) {
     const id = req.user?.id ?? req.user?.sub ?? req.user?.profile?._id;
     return this.userService.findById(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('me')
+  async updateMe(@Request() req, @Body('phoneNumber') phoneNumber: string) {
+    const id = req.user?.id ?? req.user?.sub ?? req.user?.profile?._id;
+    if (!id) {
+      throw new BadRequestException('User not authenticated');
+    }
+    if (!phoneNumber) {
+      throw new BadRequestException('phoneNumber is required');
+    }
+
+    return this.userService.updatePhoneNumber(id, phoneNumber);
   }
 
   @UseGuards(JwtAuthGuard)
