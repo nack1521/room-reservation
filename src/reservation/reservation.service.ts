@@ -2,10 +2,10 @@ import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/com
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { IReservation } from './schemas/reservation.schema';
-import { User } from 'src/user/schemas/user.schema';
-import { Role } from 'src/auth/roles.enum';
-import { IRoom } from 'src/room/schemas/room.schema';
-import { AddOnItem } from 'src/room/constants/addons-by-type';
+import { User } from '../user/schemas/user.schema';
+import { Role } from '../auth/roles.enum';
+import { IRoom } from '../room/schemas/room.schema';
+import { AddOnItem } from '../room/constants/addons-by-type';
 import { ReservationAddOnDto } from './dto/create-reservation.dto';
 
 type ReservationStatus = 'upcoming' | 'pending' | 'done' | 'rejected' | 'canceled';

@@ -11,9 +11,9 @@ import {
 import { UserService } from './user.service';
 import { RegisterDTO } from './dto/register.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from 'src/auth/roles.guard';
-import { Roles } from 'src/auth/roles-decorator';
-import { Role } from 'src/auth/roles.enum';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles-decorator';
+import { Role } from '../auth/roles.enum';
 
 @Controller('users')
 export class UserController {

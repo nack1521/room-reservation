@@ -1,6 +1,6 @@
 import { Controller, Post, UseGuards, Request, Get, Res, ForbiddenException, Query } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { UserService } from 'src/user/user.service';
+import { UserService } from '../user/user.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { GoogleAuthGuard } from './google-auth.guard';
 import * as express from 'express';

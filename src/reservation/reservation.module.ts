@@ -3,8 +3,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ReservationSchema } from './schemas/reservation.schema';
 import { ReservationService } from './reservation.service';
 import { ReservationController } from './reservation.controller';
-import { UserSchema } from 'src/user/schemas/user.schema';
-import { RoomSchema } from 'src/room/schemas/room.schema';
+import { UserSchema } from '../user/schemas/user.schema';
+import { RoomSchema } from '../room/schemas/room.schema';
 
 @Module({
   imports: [

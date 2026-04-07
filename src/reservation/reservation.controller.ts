@@ -1,10 +1,10 @@
 import { Controller, Post, Body, UseGuards, Request, Patch, Param, Delete, Get, Query } from '@nestjs/common';
 import { ReservationService } from './reservation.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
-import { JwtAuthGuard } from 'src/auth/jwt-auth.guard'; // ensure you have this
-import { RolesGuard } from 'src/auth/roles.guard';
-import { Roles } from 'src/auth/roles-decorator';
-import { Role } from 'src/auth/roles.enum';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles-decorator';
+import { Role } from '../auth/roles.enum';
 
 @Controller('reservations')
 @UseGuards(JwtAuthGuard, RolesGuard)
